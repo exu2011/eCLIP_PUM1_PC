@@ -1,0 +1,12 @@
+---------------------------------------------Readme-----------------------------------------
+在eCLIP分析中的分析脚本为:
+1. demultiplexing：demux_paired_end.py
+2. removing PCR duplicates：barcode_collapse_pe.py
+3. sort bam files：picard.jar
+4. peak calling and normalization with SMInput：tag2peak.pl and Peak_input_normalization_wrapper.pl
+
+在CIMS和CITS分析中的分析脚本为：
+1. Get the mutations in unique tags：joinWrapper.py
+2. Get specific types of mutations：getMutationType.pl
+3. Get CIMS：CIMS.pl
+4. Get CITS：CITS.pl

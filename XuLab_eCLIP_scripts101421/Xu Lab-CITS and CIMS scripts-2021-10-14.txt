@@ -1,0 +1,735 @@
+----------------------------------------------------CIMS---------------------------------------------------------------------
+###joinWrapper.py-----------Get the mutations in unique tags
+"""
+Copyright (c) 2005 Pennsylvania State University
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Some icons found in Galaxy are from the Silk Icons set, available under
+the Creative Commons Attribution 2.5 License, from:
+
+http://www.famfamfam.com/lab/icons/silk/
+
+"""
+
+
+#!/usr/bin/env python
+#Guruprasad Ananda
+"""
+This tool provides the UNIX "join" functionality.
+"""
+import sys, os, tempfile, subprocess
+
+def stop_err(msg):
+    sys.stderr.write(msg)
+    sys.exit()
+
+def main():
+    infile1 = sys.argv[1]
+    infile2 = sys.argv[2]
+    field1 = int(sys.argv[3])
+    field2 = int(sys.argv[4])
+    mode =sys.argv[5]
+    outfile = sys.argv[6]
+    
+    tmpfile1 = tempfile.NamedTemporaryFile()
+    tmpfile2 = tempfile.NamedTemporaryFile()
+    
+    try:
+        #Sort the two files based on specified fields
+        os.system("sort -t '	' -k %d,%d -o %s %s" %(field1, field1, tmpfile1.name, infile1))
+        os.system("sort -t '	' -k %d,%d -o %s %s" %(field2, field2, tmpfile2.name, infile2))
+    except Exception, exc:
+        stop_err( 'Initialization error -> %s' %str(exc) )
+        
+    option = ""
+    for line in file(tmpfile1.name):
+        line = line.strip()
+        if line:
+            elems = line.split('\t')
+            for j in range(1,len(elems)+1):
+                if j == 1:
+                    option = "1.1"
+                else:
+                    option = option + ",1." + str(j) 
+            break
+    
+    #check if join has --version option. BSD join doens't have this option, while GNU join does. 
+    #The return value in the latter case will be 0, and non-zero in the latter case.
+    ret = subprocess.call('join --version 2>/dev/null', shell=True) 
+    # check if we are a version later than 7 of join. If so, we want to skip
+    # checking the order since join will raise an error with duplicated items in
+    # the two files being joined.
+    if ret == 0: 
+        cl = subprocess.Popen(["join", "--version"], stdout=subprocess.PIPE)
+        (stdout, _) = cl.communicate()
+        version_line = stdout.split("\n")[0]
+        (version, _) = version_line.split()[-1].split(".")
+        if int(version) >= 7:
+            flags = "--nocheck-order"
+        else:
+            flags = ""
+    else:
+        flags = ""
+
+    if mode == "V":
+        cmdline = "join %s -t '	' -v 1 -o %s -1 %d -2 %d %s %s > %s" %(flags, option, field1, field2, tmpfile1.name, tmpfile2.name, outfile)
+    else:
+        cmdline = "join %s -t '	' -o %s -1 %d -2 %d %s %s > %s" %(flags, option, field1, field2, tmpfile1.name, tmpfile2.name, outfile)
+    
+    try:
+        os.system(cmdline) 
+    except Exception, exj:
+        stop_err('Error joining the two datasets -> %s' %str(exj))
+       
+if __name__ == "__main__":
+    main()
+
+###############getMutationType.pl-----------Get specific types of mutations
+#!/usr/bin/perl -w
+#
+use strict;
+use warnings;
+use Getopt::Long;
+use File::Basename;
+use Carp;
+use Bed;
+use Sequence;
+
+my $prog=basename($0);
+my $cmdDir=dirname($0);
+
+my $selectType = "";
+my $t2c = 0;
+
+my $summaryFile = "";
+my $verbose = 0;
+
+GetOptions ('t|mutationType=s'=>\$selectType,
+			'summary:s'=>\$summaryFile,
+			'v'=>\$verbose);
+
+
+if (@ARGV != 2)
+{
+	print "Get specific types of mutations\n";
+	print "usage: $prog [options] <tag.mutation.txt> <tag.mutation.type.bed>\n";
+	print " -t [string]        : the type of mutations (del|ins|sub|t2c)\n";
+	print " --summary  [string]: print summary statistics to file\n";
+	print " -v                 : verbose\n";
+	exit (1);
+}
+
+
+my ($mutationFile, $outBedFile) = @ARGV;
+my %summaryHash;
+
+if ($selectType ne 'del' && $selectType ne 'ins' && $selectType ne 'sub' && $selectType ne 't2c')
+{
+	Carp::croak "Wrong type of mutation \n";
+}
+
+
+if ($selectType eq 't2c')
+{
+	$t2c = 1;
+	$selectType = 'sub';
+}
+
+my ($fin, $fout);
+
+open ($fin, "<$mutationFile") || Carp::croak "cannot open $mutationFile to read\n";
+open ($fout, ">$outBedFile") || Carp::croak "cannot open $outBedFile to write\n";
+
+my $iter = 0;
+while (my $line = <$fin>)
+{
+	chomp $line;
+	next if $line =~/^\s*$/;
+
+	print "$iter ...\n" if $verbose && $iter % 100000 == 0;
+
+	my @cols = split (/\s+/, $line);
+	
+	my $strand = $cols[5];
+	my ($from, $type, $to) = @cols [7..9];
+
+
+	if ($type eq '-')
+	{
+		$summaryHash{'del'}++;
+		print $fout join ("\t", @cols[0..5]), "\n" if $selectType eq 'del';
+	}
+	elsif ($type eq '+')
+	{
+		$summaryHash{'ins'}++;
+		print $fout join ("\t", @cols[0..5]), "\n" if $selectType eq 'ins';
+	}
+	elsif ($type eq '>')
+	{
+
+		if ($strand eq '-')
+		{
+			$from = uc (revcom ($from));
+			$to = uc (revcom ($to));
+		}
+		
+		$summaryHash{'sub'}{"$from-$to"}++;
+		$summaryHash{'sub'}{'total'}++;
+
+		if ($selectType eq 'sub')
+		{
+			if ($t2c == 1)
+			{
+				next unless $from eq 'T' && $to eq 'C';
+			}
+			print $fout join ("\t", @cols[0..5]), "\n";
+		}
+	}
+}
+
+close ($fin);
+close ($fout);
+
+if ($summaryFile ne '')
+{
+	open ($fout, ">$summaryFile") || Carp::croak "cannot open file $summaryFile to write\n";
+
+	print $fout "Deletion: ", exists $summaryHash{'del'} ? $summaryHash{'del'} : 0, "\n";
+	print $fout "Insertion: ", exists $summaryHash{'ins'} ? $summaryHash{'ins'} : 0, "\n";
+
+	if (exists $summaryHash{'sub'})
+	{
+		print $fout "Substitution: ", $summaryHash{'sub'}{'total'}, "\n";
+		foreach my $t (sort keys %{$summaryHash{'sub'}})
+		{
+			next if $t eq 'total';
+			print $fout "$t: ", $summaryHash{'sub'}{$t}, "\n";
+		}
+	}
+
+	close ($fout);
+}
+
+
+###############CIMS.pl------------Get CIMS
+
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+
+use Getopt::Long;
+use File::Basename;
+
+use MyConfig;
+use Bed;
+
+
+my $prog = basename ($0);
+
+my $verbose = 0;
+
+my $mutationSize = 1;
+my $numIter = 5;
+my $trackPosition = 0;
+my $mutationPosSummaryFile = ""; #output position of mutations
+my $big = 0;
+
+my $noSparseCorrect = 0;
+my $FDR = 1;
+my $mkr = 0.00;
+
+my $cache = getDefaultCache ($prog);
+my $keepCache = 0;
+
+my @ARGV0 = @ARGV;
+
+GetOptions ("n:i"=>\$numIter,
+		'w:i'=>\$mutationSize,
+		"c:s"=>\$cache,
+		'keep-cache'=>\$keepCache,
+		'p'=>\$trackPosition,
+		'outp:s'=>\$mutationPosSummaryFile,
+		'big'=>\$big,
+		'no-sparse-correct'=>\$noSparseCorrect,
+		'FDR:f'=>\$FDR,
+		'mkr:f'=>\$mkr,
+		"v"=>\$verbose);
+
+
+
+if (@ARGV != 3)
+{
+	print "identify significant CIMS\n";
+	print "Usage: $prog [options] <tag.bed> <mutation.bed> <out.txt>\n";
+	print "Note: the 5th column of <mutation.bed> must have the position of the mutation relative to the chromStart of the tag\n";
+	print " -big               : big file\n";
+	print " -w     [int]       : mutation size ($mutationSize)\n";
+	print " -n     [int]       : number of iterations for permutation ($numIter)\n";
+	print " -p                 : track mutation position relative to read start\n";
+	print " --outp [file]      : output mutation position summary\n";
+	print " --no-sparse-correct: no sparcity correction\n";
+	print " -FDR   [float]     : threshold of FDR ($FDR)\n";
+	print " -mkr   [float]     : threshold of m-over-k-ratio ($mkr)\n";
+	print " -c     [dir]       : cache dir ($cache)\n";
+	print " --keep-cache       : keep cache when the job is done\n";
+	print " -v                 : verbose\n";
+	exit (1);
+}
+
+
+my ($tagBedFile, $mutationBedFile, $outFile) = @ARGV;
+
+my $cmdDir = dirname ($0);
+
+
+print "CMD = $prog ", join (" ", @ARGV0), "\n" if $verbose;
+
+my $verboseFlag = $verbose ? '-v' : '';
+my $bigFlag = $big ? '-big' :'';
+
+system ("mkdir $cache"); 
+
+
+print "clean mutations ...\n" if $verbose;
+my $cmd = "awk \'{if(\$3-\$2==$mutationSize) {print \$0}}\' $mutationBedFile > $cache/mutation.clean.bed";
+system ($cmd);
+
+$mutationBedFile = "$cache/mutation.clean.bed";
+
+$cmd = "wc -l $mutationBedFile | awk '{print \$1}'";
+my $n = `$cmd`;
+$n=~/^(\d+)/;
+$n = $1;
+Carp::croak "no mutaton of size $mutationSize found\n" unless $n > 0;
+
+print "$n mutations of size $mutationSize found\n";
+
+my $mutationPositionFile = "$cache/mutation.pos.txt";
+if ($trackPosition)
+{
+	#the original position is always relative to chromStart (0 based), even for reads on the negative strand
+	#the awk convert the position relative to read start (on the sense strand)
+	
+	print "generating CIMS position file $mutationPositionFile...\n" if $verbose;
+	
+	my $tmpMutationBedFile = "$cache/mutation.bed";
+	my $cmd = "sort -k 4,4 $mutationBedFile > $tmpMutationBedFile";
+	print "$cmd\n";	
+	system ($cmd);
+	$mutationBedFile = $tmpMutationBedFile;	 
+
+	#TODO:
+	#need to perform data integrity check to make sure the mutation coordinates are within the tags
+
+
+	my $mutationIdFile = "$cache/mutation.id";
+
+	$cmd = "cut -f 4 $mutationBedFile | awk -F \"[\" '{print \$1}' > $mutationIdFile";
+	#my $cmd = "cut -f 4 $mutationBedFile | awk -F \"[\" '{print \$1}' | sort > $mutationIdFile";
+	
+	print $cmd, "\n" if $verbose;
+	system ($cmd);
+
+	my $tmpFile = "$cache/tmp";
+	$cmd = "python $cmdDir/joinWrapper.py $tagBedFile $mutationIdFile 4 1 N $tmpFile";
+	#$cmd = "perl ~/scripts/selectRow.pl -q 3 $tagBedFile $mutationIdFile > $tmpFile";
+	print "$cmd\n" if $verbose;
+	my $ret = system ($cmd);
+	print "CMD=$cmd failed: $?\n" if $ret != 0;
+
+	my $mutationNum = `wc -l $mutationIdFile | awk '{print \$1}'`; chomp $mutationNum;
+	my $tagNum = `wc -l $tmpFile | awk '{print \$1}'`; chomp $tmpFile;
+
+	if ($mutationNum != $tagNum)
+	{
+		Carp::croak "Inconsistency detected between the tag file and the mutation file. Make sure the NAME column of the two files use the same IDs\n";
+	}
+	$cmd = "paste $mutationBedFile $tmpFile | awk '{if(\$6 ==\"+\") {print \$5;} else {print \$9-\$8\-\$5-$mutationSize}}' > $mutationPositionFile";
+	#my $cmd = "awk '{if(\$6 ==\"+\") {print \$5;} else {print \$3-\$2-\$5-1}}' $mutationBedFile > $mutationPositionFile";
+	system ($cmd);
+
+	if ($mutationPosSummaryFile ne '')
+	{
+		$cmd = "cut -f 2 $mutationPositionFile | sort -n | uniq -c | awk '{print \$2\"\\t\"\$1}'> $mutationPosSummaryFile";
+		$ret = system ($cmd);
+		print "CMD=$cmd failed: $?\n" if $ret != 0;
+	}
+}
+
+print "clustering mutation sites ...\n" if $verbose;
+my $mutationClusterFile = "$cache/mutation.cluster.bed";
+$cmd = "perl $cmdDir/tag2cluster.pl  -s  -maxgap \"-$mutationSize\" $bigFlag $verboseFlag $mutationBedFile $mutationClusterFile";
+$cmd .= " -big" if $big;
+system ($cmd);
+
+#
+print "counting the total tag number for each mutation site ...\n" if $verbose;
+my $mutationTagCountFile = "$cache/mutation.tagcount.bed";
+$cmd = "perl $cmdDir/tag2profile.pl -c $cache/tmp_mut_count -region $mutationClusterFile -ss -of bed $bigFlag $verboseFlag $tagBedFile $mutationTagCountFile";
+my $ret = system ($cmd);
+print "CMD=$cmd failed: $?\n" if $ret != 0;
+
+#
+print "reading frequency of mutations and tag number for each mutation site\n" if $verbose;
+my $mutationClusters = readBedFile ($mutationClusterFile, $verbose);  # m
+my $mutationTagCount = readBedFile ($mutationTagCountFile, $verbose); # k
+
+my $totalMutations = 0;
+my %mutationClusterOverallHash;
+my %mutationClusterHash;
+
+for (my $i = 0; $i < @$mutationClusters; $i++)
+{
+	my $c = $mutationClusters->[$i];
+	$c->{'freq'} = $c->{'score'};
+	$totalMutations += $c->{'freq'};
+
+	$c->{'tag'} = $mutationTagCount->[$i]->{'score'};
+
+	$mutationClusterHash{$c->{'tag'}}{$c->{'freq'}}->{'count'}++;
+	$mutationClusterOverallHash{$c->{'freq'}}->{'count'}++;
+}
+
+
+print "find cummulative distributions ...\n" if $verbose;
+
+my $s = 0;
+foreach my $freq (sort {$b <=> $a} keys %mutationClusterOverallHash)
+{
+	$mutationClusterOverallHash{$freq}->{'cumm'} = $s + $mutationClusterOverallHash{$freq}->{'count'};
+	$s = $mutationClusterOverallHash{$freq}->{'cumm'};
+}
+
+foreach my $tagNum (sort {$b <=> $a} keys %mutationClusterHash)
+{
+	my $mutationClusterHashWithTagNum = $mutationClusterHash{$tagNum};
+	my $s = 0;
+	foreach my $freq (sort {$b<=>$a} keys %$mutationClusterHashWithTagNum)
+	{
+		$mutationClusterHashWithTagNum->{$freq}->{'cumm'} = $s + $mutationClusterHashWithTagNum->{$freq}->{'count'};
+		$s = $mutationClusterHashWithTagNum->{$freq}->{'cumm'};
+	}
+}
+
+
+
+#my $numIter = 1;
+
+srand (0);
+
+print "start simulations, $totalMutations mutations in total  ...\n" if $verbose;
+
+my %randomMutationClusterHash;
+my %randomMutationClusterOverallHash;
+for (my $i = 0; $i < $numIter; $i++)
+{
+	print "Iteration $i ...\n" if $verbose;
+
+	#
+	print "generating random CIMS sites ...\n" if $verbose;
+	my $randomMutationBedFile = "$cache/mutation.random.$i.bed";
+	my $trackPosFlag = $trackPosition ? " -p $mutationPositionFile " : "";
+	my $rand_seed = 0;
+
+	#generate a non-zero seed for each iteration
+	$rand_seed = rand () + 1;
+
+	#$cmd = "perl ~/scripts/simulateCLIPmismatch.pl -n $totalMutations $trackPosFlag $verboseFlag -srand $rand_seed $tagBedFile $randomMutationBedFile";
+	$cmd = "perl $cmdDir/simulateCIMS.pl -n $totalMutations -w $mutationSize $trackPosFlag -srand $rand_seed $tagBedFile $randomMutationBedFile";
+	
+	print $cmd, "\n" if $verbose;
+	my $ret = system ($cmd);
+
+	Carp::croak "CMD=$cmd failed: $?\n" if $ret != 0;
+
+	#
+	print "clustering mutation sites in $randomMutationBedFile ...\n" if $verbose;
+	my $randomMutationClusterFile = "$cache/mutation.random.$i.cluster.bed";
+	#$cmd = "perl ~/scripts/tag2cluster.pl  -s  -maxgap \"-1\" $verboseFlag $randomMutationBedFile $randomMutationClusterFile";
+	$cmd = "perl $cmdDir/tag2cluster.pl  -s  -maxgap \"-$mutationSize\" $randomMutationBedFile $randomMutationClusterFile";
+	
+	$cmd .= " -big" if $big;
+	$ret = system ($cmd);
+
+	Carp::croak "CMD=$cmd failed: $?\n" if $ret != 0;
+
+	#
+	print "counting the total tag number for each clustered mutation site in $randomMutationClusterFile ...\n" if $verbose;
+	my $randomMutationTagCountFile = "$cache/mutation.random.$i.tagcount.bed";
+	#$cmd = "perl ~/scripts/tag2profile.pl -region $randomMutationClusterFile -ss -of bed $verboseFlag $tagBedFile $randomMutationTagCountFile";
+	$cmd = "perl $cmdDir/tag2profile.pl -c $cache/tmp_mut_count_$i -region $randomMutationClusterFile -ss -of bed $tagBedFile $randomMutationTagCountFile";
+	
+	$cmd .= " -big" if $big;
+	$ret = system ($cmd);
+	Carp::croak "CMD=$cmd failed: $?\n" if $ret != 0;
+
+	print "reading frequency of mutations and tag number for each mutation site\n" if $verbose;
+
+	#my $randomCIMSTagCount = AnnotationIO::readBedFile ($randomCIMSTagCountFile, $verbose);
+	#my $randomCIMSClusters = AnnotationIO::readBedFile ($randomCIMSClusterFile, $verbose);
+
+	my $fin1;
+	my $fin2;
+	open ($fin1, "<$randomMutationTagCountFile") || Carp::croak "cannot open file $randomMutationTagCountFile to read\n";
+	open ($fin2, "<$randomMutationClusterFile") || Carp::croak "cannot open file $randomMutationClusterFile to read\n";
+
+	my $i = 0;
+	while (my $line = <$fin1>)
+	{
+		#my $line = <$fin1>;
+		chomp $line;
+		my @cols = split ("\t", $line);
+		my $k = $cols[4];
+
+		$line = <$fin2>;
+		chomp $line;
+		@cols = split ("\t", $line);
+		my $m = $cols[4];
+
+		$randomMutationClusterHash{$k}{$m}->{'count'}++;
+		$randomMutationClusterOverallHash{$m}->{'count'}++;
+
+		$i++;
+	}
+	close ($fin1);
+	close ($fin2);
+}
+
+print "find cummulative distributions ...\n" if $verbose;
+$s = 0;
+foreach my $freq (sort {$b <=> $a} keys %randomMutationClusterOverallHash)
+{
+	$randomMutationClusterOverallHash{$freq}->{'cumm'} = $s + $randomMutationClusterOverallHash{$freq}->{'count'};
+	$s = $randomMutationClusterOverallHash{$freq}->{'cumm'};
+}
+
+foreach my $tagNum (sort {$b <=> $a} keys %randomMutationClusterHash)
+{
+	my $randomMutationClusterHashWithTagNum = $randomMutationClusterHash{$tagNum};
+	my $s = 0;
+	foreach my $freq (sort {$b<=>$a} keys %$randomMutationClusterHashWithTagNum)
+	{
+		$randomMutationClusterHashWithTagNum->{$freq}->{'cumm'} = $s + $randomMutationClusterHashWithTagNum->{$freq}->{'count'};
+		$s = $randomMutationClusterHashWithTagNum->{$freq}->{'cumm'};
+	}
+}
+
+my (%qHash, %qHash2);
+foreach my $c (@$mutationClusters)
+{
+	my $tagNum = $c->{'tag'};
+	my $freq = $c->{'freq'};
+
+	my $count = exists $mutationClusterHash{$tagNum} && exists $mutationClusterHash{$tagNum}{$freq} ? $mutationClusterHash{$tagNum}{$freq}->{'cumm'} : 0;
+	my $countOverall = exists $mutationClusterOverallHash{$freq} ? $mutationClusterOverallHash{$freq}->{'cumm'} : 0;
+
+	my $countRandom = exists $randomMutationClusterHash{$tagNum} && exists $randomMutationClusterHash{$tagNum}{$freq} ? $randomMutationClusterHash{$tagNum}{$freq}->{'cumm'} : 0;
+	my $countOverallRandom = exists $randomMutationClusterOverallHash{$freq} ? $randomMutationClusterOverallHash{$freq}->{'cumm'} : 0;
+
+	$countRandom /= $numIter;
+	$countOverallRandom /= $numIter;
+
+	my $q = $countRandom / $count;
+	$q = 1 if $q >1;
+	my $qOverall = $countOverallRandom / $countOverall;
+	$qOverall = 1 if $qOverall > 1;
+
+	$c->{'name'} .= "[k=$tagNum][m=$freq]";
+	$c->{'q'} = $q;
+
+	$qHash{$freq}{$tagNum} = \$q;
+	$qHash2{$tagNum}{$freq} = \$q;
+	#print $fout join ("\t", bedToLine ($c), $tagNum, $freq, $q, $count), "\n" #, $qOverall, $countOverall), "\n";
+}
+
+if ($noSparseCorrect == 0)
+{
+	print "correcting FDRs for sparse sampling ...\n" if $verbose;
+
+	for (my $iter = 0; $iter < 1; $iter++)
+	{
+		foreach my $m (sort {$a <=> $b} keys %qHash)
+		{
+			my @ks = sort {$a <=> $b} keys %{$qHash{$m}};
+			for (my $i = 1; $i < @ks; $i++)
+			{
+				my $k1 = $ks[$i-1];
+				my $k2 = $ks[$i];
+				${$qHash{$m}{$k2}} = ${$qHash{$m}{$k1}} if ${$qHash{$m}{$k2}} < ${$qHash{$m}{$k1}};
+			}
+		}
+=extra
+		foreach my $k (sort {$a <=> $b} keys %qHash2)
+		{
+			my @ms = sort {$b <=> $a} keys %{$qHash2{$k}};
+			for (my $i = 1; $i < @ms; $i++)
+			{
+				my $m1 = $ms[$i-1];
+				my $m2 = $ms[$i];
+				${$qHash2{$k}{$m2}} = ${$qHash2{$k}{$m1}} if ${$qHash2{$k}{$m2}} < ${$qHash2{$k}{$m1}};
+			}
+		}
+=cut
+	}
+}
+
+
+
+print "writing output to $outFile ...\n" if $verbose;
+my $fout;
+
+open ($fout, ">$outFile") || Carp::croak "can not open file $outFile to write\n";
+print $fout "#", join ("\t", "chrom", "chromStart", "chromEnd", "name", "score", "strand", "tagNumber(k)", "mutationFreq(m)", "FDR", "count(>=m,k)"), "\n"; #"overallFDR", "overallCount(>=m)"), "\n";
+
+foreach my $c (@$mutationClusters)
+{
+	my $tagNum = $c->{'tag'};
+	my $freq = $c->{'freq'};
+	my $q = ${$qHash{$freq}{$tagNum}};
+	my $count = exists $mutationClusterHash{$tagNum} && exists $mutationClusterHash{$tagNum}{$freq} ? $mutationClusterHash{$tagNum}{$freq}->{'cumm'} : 0;
+	print $fout join ("\t", bedToLine ($c), $tagNum, $freq, $q, $count), "\n" if $q <= $FDR && $freq / $tagNum >= $mkr; #, $qOverall, $countOverall), "\n";
+}
+
+close ($fout);
+
+system ("rm -rf $cache") unless $keepCache;
+#select(STDOUT);
+
+###############CITS.pl------------Get CITS
+
+#!/usr/bin/perl -w
+#
+use strict;
+use warnings;
+use Getopt::Long;
+use File::Basename;
+use Carp;
+use Data::Dumper;
+
+use Common;
+use MyConfig;
+
+my $prog = basename ($0);
+my $cmdDir = dirname ($0);
+
+
+my $bigFile = "";        #if yes, we need to use cache
+#my $minBlockSize = 2000000;
+my $pvalueThreshold = 0.01;
+my $multiTestCorrection = "";
+my $maxGap = -1;
+my $prefix = "CITS";
+
+my $cache = getDefaultCache ($prog);
+my $keepCache = "";
+my $verbose = "";
+
+
+GetOptions (
+		'big'=>\$bigFile,
+        'p:f'=>\$pvalueThreshold,
+        'multi-test'=>\$multiTestCorrection,
+        'gap:i'=>\$maxGap,
+        'c|cache:s'=>\$cache,
+        'keep-cache'=>\$keepCache,
+        'v|verbose'=>\$verbose
+);
+
+if (@ARGV != 3)
+{
+	print "identify significant CITS\n";
+	print "usage: $prog [options] <uniq.tag.bed> <uniq.mutation.type.bed> <out.CITS.bed>\n";
+	print " -big          : the input tag file is big\n";
+	print " -p   [double] : p-value threshold ($pvalueThreshold)\n";
+	print " --multi-test  : perform bonferroni multiple test correction\n";
+	print " --gap   [int] : max gap used to cluster CITS ($maxGap, -1=no cluster)\n";
+	print " -c   [string] : cache dir ($cache)\n";
+	print " -v            : verbose\n";
+	exit (1);
+}
+
+my ($uniqTagBedFile, $uniqMutationBedFile, $outCITSBedFile)=@ARGV;
+
+my $ret = system ("mkdir $cache");
+Carp::croak "cannot mkdir $cache\n" if $ret != 0;
+
+##
+print "remove tags with potential CITS ...\n" if $verbose;
+
+my $uniqTagCleanBedFile = "$cache/tag.clean.bed";
+
+my $cmd = "perl $cmdDir/removeRow.pl -q 3 -f 3 $uniqTagBedFile $uniqMutationBedFile > $uniqTagCleanBedFile";
+print $cmd, "\n" if $verbose;
+
+$ret = system($cmd);
+Carp::croak "CMD=$cmd failed: $?\n" if $ret != 0;
+
+
+##
+print "get potential truncation position ...\n" if $verbose;
+my $verboseFlag = $verbose ? '-v' : '';
+my $uniqTagTruncBedFile = "$cache/tag.trunc.bed";
+
+$cmd = "perl $cmdDir/bedExt.pl $verboseFlag -n up -l \"-1\" -r \"-1\" $uniqTagCleanBedFile $uniqTagTruncBedFile";
+print $cmd, "\n" if $verbose;
+
+$ret = system($cmd);
+Carp::croak "CMD=$cmd failed: $?\n" if $ret != 0;
+
+##
+print "cluster unique tags...\n" if $verbose;
+my $bigFlag = $bigFile ? '-big' : '';
+my $keepCacheFlag = $keepCache ? '--keep-cache' : '';
+my $tagClusterBedFile = "$cache/tag.cluster.0.bed";
+
+$cmd = "perl $cmdDir/tag2cluster.pl $bigFlag $verboseFlag $keepCacheFlag -c $cache/tag2cluster_cache -s -maxgap \"-1\" $uniqTagBedFile $tagClusterBedFile";
+print $cmd, "\n" if $verbose;
+
+$ret = system($cmd);
+Carp::croak "CMD=$cmd failed: $?\n" if $ret != 0;
+
+my $tagClusterCleanBedFile = "$cache/tag.cluster.bed";
+$cmd = "awk '{if(\$5>2) {print \$0}}' $tagClusterBedFile > $tagClusterCleanBedFile";
+print $cmd, "\n" if $verbose;
+
+$ret = system($cmd);
+Carp::croak "CMD=$cmd failed: $?\n" if $ret != 0;
+
+##
+
+print "identifying CITS ...\n" if $verbose;
+my $multTestFlag = $multiTestCorrection ? '--multi-test' : '';
+
+$cmd = "perl $cmdDir/tag2peak.pl $bigFlag $verboseFlag $keepCacheFlag -c $cache/tag2peak_cache -ss --prefix $prefix -gap $maxGap -p $pvalueThreshold $multTestFlag --gene $tagClusterCleanBedFile $uniqTagTruncBedFile $outCITSBedFile";
+print $cmd, "\n" if $verbose;
+
+$ret = system($cmd);
+Carp::croak "CMD=$cmd failed: $?\n" if $ret != 0;
+
+system ("rm -rf $cache") unless $keepCache;
+
+
+
+
+
+
+
